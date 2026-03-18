@@ -1,9 +1,10 @@
-console.log('======== TEST JOHAN V3 ========');
-console.log('START FILE OK');
-console.log('DATABASE ENV RAW =', !!process.env.DATABASE_URL);
 const express = require('express');
 const Stripe = require('stripe');
 const { Pool } = require('pg');
+
+console.log('======== TEST JOHAN V4 ========');
+console.log('START FILE OK');
+console.log('ENV DATABASE RAW =', !!process.env.DATABASE_URL);
 
 const app = express();
 
