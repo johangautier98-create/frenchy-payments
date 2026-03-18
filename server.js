@@ -17,7 +17,9 @@ console.log('ENV CHECK =>', {
   STRIPE_SECRET_KEY_length: STRIPE_SECRET_KEY.length,
   RESEND_API_KEY_present: !!RESEND_API_KEY,
   DATABASE_URL_present: !!DATABASE_URL,
-  CRON_SECRET_present: !!CRON_SECRET
+  CRON_SECRET_present: !!CRON_SECRET,
+  FROM_EMAIL_present: !!FROM_EMAIL,
+  TO_EMAIL_present: !!TO_EMAIL
 });
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
@@ -256,6 +258,11 @@ async function sendEmail(payload) {
 }
 
 async function ensureDb() {
+  if (!pool) {
+    console.log('DB init skipped: DATABASE_URL absente');
+    return;
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS scheduled_payments (
       id BIGSERIAL PRIMARY KEY,
@@ -332,6 +339,10 @@ function validateCommonBody(body) {
 }
 
 async function getOrCreateCustomer(email, name, companyName = '') {
+  if (!stripe) {
+    throw new Error('STRIPE_SECRET_KEY absente côté serveur');
+  }
+
   const customers = await stripe.customers.list({ email, limit: 1 });
   if (customers.data.length > 0) return customers.data[0];
 
@@ -343,6 +354,10 @@ async function getOrCreateCustomer(email, name, companyName = '') {
 }
 
 async function insertScheduledPayment(data) {
+  if (!pool) {
+    throw new Error('DATABASE_URL absente côté serveur');
+  }
+
   const q = `
     INSERT INTO scheduled_payments (
       order_ref, payment_mode, delay_days, due_at, status,
@@ -383,6 +398,10 @@ async function insertScheduledPayment(data) {
 }
 
 async function markPaymentStatus(id, status, lastError = null, extra = {}) {
+  if (!pool) {
+    throw new Error('DATABASE_URL absente côté serveur');
+  }
+
   const fields = ['status = $2', 'last_error = $3', 'updated_at = NOW()'];
   const values = [id, status, lastError];
 
@@ -396,11 +415,19 @@ async function markPaymentStatus(id, status, lastError = null, extra = {}) {
 }
 
 app.get('/', (req, res) => {
-  res.json({ status: 'Frenchy Leurres API OK' });
+  res.json({
+    status: 'Frenchy Leurres API OK',
+    stripeConfigured: !!stripe,
+    dbConfigured: !!pool
+  });
 });
 
 app.get('/health', async (req, res) => {
   try {
+    if (!pool) {
+      return res.status(500).json({ ok: false, error: 'DATABASE_URL absente' });
+    }
+
     await pool.query('SELECT 1');
     res.json({ ok: true });
   } catch (err) {
@@ -408,13 +435,15 @@ app.get('/health', async (req, res) => {
   }
 });
 
-/**
- * CARTE
- * - 0 jour  => paiement immédiat
- * - >0 jour => autorisation manuelle + stockage en base pour capture future
- */
 app.post('/create-payment', async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({ error: 'STRIPE_SECRET_KEY absente côté serveur' });
+    }
+    if (!pool) {
+      return res.status(500).json({ error: 'DATABASE_URL absente côté serveur' });
+    }
+
     const data = validateCommonBody(req.body);
     const captureDateObj = addDays(new Date(), data.delay_days);
     const captureDate = formatDateFR(captureDateObj);
@@ -527,12 +556,12 @@ app.post('/create-payment', async (req, res) => {
   }
 });
 
-/**
- * SEPA ETAPE 1
- * - crée le mandat / setup intent
- */
 app.post('/create-sepa', async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({ error: 'STRIPE_SECRET_KEY absente côté serveur' });
+    }
+
     const data = validateCommonBody(req.body);
     const customer = await getOrCreateCustomer(data.customer_email, data.customer_name, data.company_name);
 
@@ -558,13 +587,15 @@ app.post('/create-sepa', async (req, res) => {
   }
 });
 
-/**
- * SEPA ETAPE 2
- * - 0 jour  => crée le débit immédiatement
- * - >0 jour => récupère le payment_method du setup intent et stocke pour débit futur
- */
 app.post('/confirm-sepa', async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({ error: 'STRIPE_SECRET_KEY absente côté serveur' });
+    }
+    if (!pool) {
+      return res.status(500).json({ error: 'DATABASE_URL absente côté serveur' });
+    }
+
     const data = validateCommonBody(req.body);
 
     const { setupIntentId, customerId } = req.body;
@@ -676,13 +707,15 @@ app.post('/confirm-sepa', async (req, res) => {
   }
 });
 
-/**
- * ROUTE CRON
- * Appelée par un cron externe une fois par jour, ou toutes les heures.
- * Header requis : x-cron-secret
- */
 app.post('/run-due-captures', async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({ error: 'STRIPE_SECRET_KEY absente côté serveur' });
+    }
+    if (!pool) {
+      return res.status(500).json({ error: 'DATABASE_URL absente côté serveur' });
+    }
+
     const headerSecret = req.headers['x-cron-secret'];
     if (!CRON_SECRET || headerSecret !== CRON_SECRET) {
       return res.status(401).json({ error: 'Non autorisé' });
@@ -820,5 +853,7 @@ ensureDb()
   })
   .catch((err) => {
     console.error('DB init error', err);
-    process.exit(1);
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT} (with DB init error)`);
+    });
   });
