@@ -5,25 +5,28 @@ const { Pool } = require('pg');
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const CRON_SECRET = process.env.CRON_SECRET || '';
-const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_URL = process.env.DATABASE_URL || '';
 const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
 const TO_EMAIL = process.env.TO_EMAIL || 'gautierfishing@gmail.com';
 
-if (!STRIPE_SECRET_KEY) {
-  throw new Error('STRIPE_SECRET_KEY manquante');
-}
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL manquante');
-}
-
-const stripe = new Stripe(STRIPE_SECRET_KEY);
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+console.log('ENV CHECK =>', {
+  STRIPE_SECRET_KEY_present: !!STRIPE_SECRET_KEY,
+  STRIPE_SECRET_KEY_length: STRIPE_SECRET_KEY.length,
+  RESEND_API_KEY_present: !!RESEND_API_KEY,
+  DATABASE_URL_present: !!DATABASE_URL,
+  CRON_SECRET_present: !!CRON_SECRET
 });
+
+const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
+const pool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    })
+  : null;
 
 app.use(express.json({ limit: '1mb' }));
 
