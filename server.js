@@ -1,3 +1,6 @@
+console.log('======== TEST JOHAN FINAL ========');
+console.log('CODE UPDATED OK');
+
 const express = require('express');
 const Stripe = require('stripe');
 const { Pool } = require('pg');
