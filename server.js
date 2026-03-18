@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const CRON_SECRET = process.env.CRON_SECRET || '';
-const DATABASE_URL = postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}} || '';
+const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}} ';
 const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
 const TO_EMAIL = process.env.TO_EMAIL || 'gautierfishing@gmail.com';
 
