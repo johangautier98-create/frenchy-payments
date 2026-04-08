@@ -545,6 +545,31 @@ app.get('/health', async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+// ═══════════════════════════════════════════
+// NOUVEAU : récupérer les commandes d'un client PRO
+// ═══════════════════════════════════════════
+app.get('/orders', async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: 'DATABASE_URL absente' });
+    const email = req.query.email;
+    if (!email || !validateEmail(email)) {
+      return res.status(400).json({ error: 'Email invalide' });
+    }
+    const result = await pool.query(
+      `SELECT id, order_ref, payment_mode, delay_days, due_at,
+              status, total, currency, created_at, items_json
+       FROM scheduled_payments
+       WHERE customer_email = $1
+       ORDER BY created_at DESC`,
+      [email]
+    );
+    res.json({ orders: result.rows });
+  } catch (err) {
+    console.error('orders error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
  
 app.post('/create-payment', async (req, res) => {
   try {
@@ -819,4 +844,3 @@ ensureDb()
     console.error('DB init error', err);
     app.listen(PORT, () => console.log(`Server running on port ${PORT} (with DB init error)`));
   });
- 
