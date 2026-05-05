@@ -646,6 +646,49 @@ app.post('/order-pro', async (req, res) => {
     res.status(500).json({ error: err.message || 'Erreur serveur' });
   }
 });
+
+// ═══════════════════════════════════════════
+// DEMANDE CONFIGURATION SEPA
+// ═══════════════════════════════════════════
+app.post('/sepa-request', async (req, res) => {
+  try {
+    const { company_name, customer_name, customer_email } = req.body;
+    const html = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:30px;">
+      <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.1);">
+        <div style="background:linear-gradient(135deg,#0071e3,#0050b3);padding:24px 32px;">
+          <div style="font-size:20px;font-weight:900;color:#fff;letter-spacing:2px;">🏦 DEMANDE CONFIGURATION SEPA</div>
+        </div>
+        <div style="padding:28px 32px;">
+          <p style="font-size:15px;color:#333;">Un professionnel demande à configurer son prélèvement SEPA.</p>
+          <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+            <tr><td style="padding:10px;color:#888;font-size:13px;border-bottom:1px solid #eee;">Société / Magasin</td><td style="padding:10px;font-weight:700;font-size:14px;border-bottom:1px solid #eee;">${safe(company_name)}</td></tr>
+            <tr><td style="padding:10px;color:#888;font-size:13px;border-bottom:1px solid #eee;">Contact</td><td style="padding:10px;font-size:14px;border-bottom:1px solid #eee;">${safe(customer_name)}</td></tr>
+            <tr><td style="padding:10px;color:#888;font-size:13px;">Email</td><td style="padding:10px;font-size:14px;color:#0071e3;">${safe(customer_email)}</td></tr>
+          </table>
+          <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:16px;font-size:13px;color:#5d4037;">
+            ➡️ <strong>Action requise :</strong> Envoyez le lien de configuration SEPA Stripe à <strong>${safe(customer_email)}</strong> pour que ce professionnel puisse enregistrer son IBAN.
+          </div>
+        </div>
+      </div>
+    </body></html>`;
+
+    await sendEmail({
+      subject: `🏦 Demande SEPA — ${safe(company_name)}`,
+      htmlData: {
+        title: 'Demande SEPA', payment_mode: 'Configuration SEPA requise',
+        captureDate: '—', delay_days: 0,
+        company_name, customer_name, customer_email,
+        phone: '', order_ref: 'SEPA-REQUEST', sample_request: '', total: 0, items: [],
+        extra_lines: [`➡️ Envoyer le lien SEPA Stripe à : ${safe(customer_email)}`]
+      }
+    });
+
+    res.json({ success: true });
+  } catch(err) {
+    console.error('sepa-request error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 ensureDb()
   .then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
