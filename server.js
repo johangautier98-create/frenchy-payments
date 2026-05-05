@@ -547,295 +547,6 @@ app.get('/health', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════
-// NOUVEAU : récupérer les commandes d'un client PRO
-// ═══════════════════════════════════════════
-app.get('/orders', async (req, res) => {
-  try {
-    if (!pool) return res.status(500).json({ error: 'DATABASE_URL absente' });
-    const email = req.query.email;
-    if (!email || !validateEmail(email)) {
-      return res.status(400).json({ error: 'Email invalide' });
-    }
-    const result = await pool.query(
-      `SELECT id, order_ref, payment_mode, delay_days, due_at,
-              status, total, currency, created_at, items_json
-       FROM scheduled_payments
-       WHERE customer_email = $1
-       ORDER BY created_at DESC`,
-      [email]
-    );
-    res.json({ orders: result.rows });
-  } catch (err) {
-    console.error('orders error', err);
-    res.status(500).json({ error: err.message });
-  }
-});
- 
-app.post('/create-payment', async (req, res) => {
-  try {
-    if (!stripe) return res.status(500).json({ error: 'STRIPE_SECRET_KEY absente côté serveur' });
-    if (!pool) return res.status(500).json({ error: 'DATABASE_URL absente côté serveur' });
- 
-    const data = validateCommonBody(req.body);
-    const captureDateObj = addDays(new Date(), data.delay_days);
-    const captureDate = formatDateFR(captureDateObj);
-    const customer = await getOrCreateCustomer(data.customer_email, data.customer_name, data.company_name);
- 
-    const commonHtmlData = {
-      payment_mode: 'Carte bancaire',
-      captureDate,
-      delay_days: data.delay_days,
-      company_name: data.company_name,
-      shop_name: data.shop_name,
-      customer_name: data.customer_name,
-      customer_email: data.customer_email,
-      phone: data.phone,
-      order_ref: data.order_ref,
-      sample_request: data.sample_request,
-      total: data.total,
-      items: data.items
-    };
- 
-    if (data.delay_days === 0) {
-      const pi = await stripe.paymentIntents.create({
-        amount: amountToCents(data.amount),
-        currency: data.currency,
-        customer: customer.id,
-        payment_method_types: ['card'],
-        capture_method: 'automatic',
-        metadata: { order_ref: data.order_ref, delay_days: '0', company_name: data.company_name }
-      });
- 
-      await sendEmail({
-        subject: `🎣 Commande Pro comptant CB — ${data.company_name} — ${data.order_ref}`,
-        htmlData: { ...commonHtmlData, title: 'Commande Pro comptant', extra_lines: ['Paiement carte à encaisser immédiatement.'] }
-      }).catch(console.error);
- 
-      await sendClientEmail({
-        to: data.customer_email,
-        subject: `✅ Confirmation de commande — ${data.order_ref}`,
-        htmlData: { ...commonHtmlData, title: 'Confirmation de commande' }
-      }).catch(console.error);
- 
-      return res.json({ mode: 'immediate', clientSecret: pi.client_secret, paymentIntentId: pi.id, captureDate });
-    }
- 
-    const pi = await stripe.paymentIntents.create({
-      amount: amountToCents(data.amount),
-      currency: data.currency,
-      customer: customer.id,
-      payment_method_types: ['card'],
-      capture_method: 'manual',
-      metadata: { order_ref: data.order_ref, delay_days: String(data.delay_days), company_name: data.company_name }
-    });
- 
-    await insertScheduledPayment({
-      order_ref: data.order_ref, payment_mode: 'card', delay_days: data.delay_days,
-      due_at: captureDateObj.toISOString(), status: 'authorized_pending_capture',
-      amount_cents: amountToCents(data.amount), currency: data.currency,
-      company_name: data.company_name, customer_name: data.customer_name,
-      customer_email: data.customer_email, phone: data.phone,
-      sample_request: data.sample_request, total: data.total,
-      items_json: data.items, stripe_customer_id: customer.id, stripe_payment_intent_id: pi.id
-    });
- 
-    await sendEmail({
-      subject: `🎣 Nouvelle commande Pro CB différée — ${data.company_name} — ${data.order_ref}`,
-      htmlData: { ...commonHtmlData, title: 'Commande Pro différée', extra_lines: ['Carte autorisée maintenant.', `Capture automatique prévue le ${captureDate}.`] }
-    }).catch(console.error);
- 
-    await sendClientEmail({
-      to: data.customer_email,
-      subject: `✅ Confirmation de commande — ${data.order_ref}`,
-      htmlData: { ...commonHtmlData, title: 'Confirmation de commande' }
-    }).catch(console.error);
- 
-    return res.json({ mode: 'manual_capture', clientSecret: pi.client_secret, paymentIntentId: pi.id, captureDate });
-  } catch (err) {
-    console.error('create-payment error', err);
-    res.status(500).json({ error: err.message || 'Erreur serveur' });
-  }
-});
- 
-app.post('/create-sepa', async (req, res) => {
-  try {
-    if (!stripe) return res.status(500).json({ error: 'STRIPE_SECRET_KEY absente côté serveur' });
- 
-    const data = validateCommonBody(req.body);
-    const customer = await getOrCreateCustomer(data.customer_email, data.customer_name, data.company_name);
- 
-    const setupIntent = await stripe.setupIntents.create({
-      customer: customer.id,
-      payment_method_types: ['sepa_debit'],
-      metadata: { order_ref: data.order_ref, delay_days: String(data.delay_days), company_name: data.company_name, sample_request: data.sample_request || '' }
-    });
- 
-    return res.json({ clientSecret: setupIntent.client_secret, customerId: customer.id, setupIntentId: setupIntent.id });
-  } catch (err) {
-    console.error('create-sepa error', err);
-    res.status(500).json({ error: err.message || 'Erreur serveur' });
-  }
-});
- 
-app.post('/confirm-sepa', async (req, res) => {
-  try {
-    if (!stripe) return res.status(500).json({ error: 'STRIPE_SECRET_KEY absente côté serveur' });
-    if (!pool) return res.status(500).json({ error: 'DATABASE_URL absente côté serveur' });
- 
-    const data = validateCommonBody(req.body);
-    const { setupIntentId, customerId } = req.body;
-    if (!setupIntentId || !customerId) return res.status(400).json({ error: 'setupIntentId ou customerId manquant' });
- 
-    const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
-    if (!setupIntent.payment_method) return res.status(400).json({ error: 'Aucun mandat SEPA confirmé' });
- 
-    const dueDateObj = addDays(new Date(), data.delay_days);
-    const captureDate = formatDateFR(dueDateObj);
-    const paymentMethodId = setupIntent.payment_method;
- 
-    const commonHtmlData = {
-      payment_mode: 'Prélèvement SEPA',
-      captureDate,
-      delay_days: data.delay_days,
-      company_name: data.company_name,
-      shop_name: data.shop_name,
-      customer_name: data.customer_name,
-      customer_email: data.customer_email,
-      phone: data.phone,
-      order_ref: data.order_ref,
-      sample_request: data.sample_request,
-      total: data.total,
-      items: data.items
-    };
- 
-    if (data.delay_days === 0) {
-      const pi = await stripe.paymentIntents.create({
-        amount: amountToCents(data.amount), currency: 'eur', customer: customerId,
-        payment_method: paymentMethodId, payment_method_types: ['sepa_debit'], confirm: true,
-        metadata: { order_ref: data.order_ref, delay_days: '0', company_name: data.company_name }
-      });
- 
-      await sendEmail({
-        subject: `🎣 Commande Pro comptant SEPA — ${data.company_name} — ${data.order_ref}`,
-        htmlData: { ...commonHtmlData, title: 'Commande Pro comptant', extra_lines: ['Mandat SEPA validé et débit initié immédiatement.'] }
-      }).catch(console.error);
- 
-      await sendClientEmail({
-        to: data.customer_email,
-        subject: `✅ Confirmation de commande — ${data.order_ref}`,
-        htmlData: { ...commonHtmlData, title: 'Confirmation de commande' }
-      }).catch(console.error);
- 
-      return res.json({ mode: 'immediate', success: true, paymentIntentId: pi.id, captureDate });
-    }
- 
-    await insertScheduledPayment({
-      order_ref: data.order_ref, payment_mode: 'sepa', delay_days: data.delay_days,
-      due_at: dueDateObj.toISOString(), status: 'scheduled',
-      amount_cents: amountToCents(data.amount), currency: 'eur',
-      company_name: data.company_name, customer_name: data.customer_name,
-      customer_email: data.customer_email, phone: data.phone,
-      sample_request: data.sample_request, total: data.total,
-      items_json: data.items, stripe_customer_id: customerId,
-      stripe_setup_intent_id: setupIntentId, stripe_payment_method_id: paymentMethodId
-    });
- 
-    await sendEmail({
-      subject: `🎣 Nouvelle commande Pro SEPA différée — ${data.company_name} — ${data.order_ref}`,
-      htmlData: { ...commonHtmlData, title: 'Commande Pro différée', extra_lines: ['Mandat SEPA validé maintenant.', `Débit SEPA à initier automatiquement le ${captureDate}.`] }
-    }).catch(console.error);
- 
-    await sendClientEmail({
-      to: data.customer_email,
-      subject: `✅ Confirmation de commande — ${data.order_ref}`,
-      htmlData: { ...commonHtmlData, title: 'Confirmation de commande' }
-    }).catch(console.error);
- 
-    return res.json({ mode: 'scheduled', success: true, captureDate });
-  } catch (err) {
-    console.error('confirm-sepa error', err);
-    res.status(500).json({ error: err.message || 'Erreur serveur' });
-  }
-});
- 
-app.post('/run-due-captures', async (req, res) => {
-  try {
-    if (!stripe) return res.status(500).json({ error: 'STRIPE_SECRET_KEY absente côté serveur' });
-    if (!pool) return res.status(500).json({ error: 'DATABASE_URL absente côté serveur' });
- 
-    const headerSecret = req.headers['x-cron-secret'];
-    if (!CRON_SECRET || headerSecret !== CRON_SECRET) return res.status(401).json({ error: 'Non autorisé' });
- 
-    const due = await pool.query(`
-      SELECT * FROM scheduled_payments
-      WHERE status IN ('authorized_pending_capture', 'scheduled') AND due_at <= NOW()
-      ORDER BY due_at ASC LIMIT 100
-    `);
- 
-    const results = [];
- 
-    for (const row of due.rows) {
-      try {
-        if (row.payment_mode === 'card') {
-          if (!row.stripe_payment_intent_id) throw new Error('payment_intent_id manquant');
-          const captured = await stripe.paymentIntents.capture(row.stripe_payment_intent_id);
-          await markPaymentStatus(row.id, 'captured', null, { stripe_payment_intent_id: captured.id });
- 
-          await sendEmail({
-            subject: `✅ CB capturée — ${row.company_name} — ${row.order_ref}`,
-            htmlData: {
-              title: 'Paiement capturé', payment_mode: 'Carte bancaire',
-              captureDate: formatDateFR(new Date()), delay_days: row.delay_days,
-              company_name: row.company_name, customer_name: row.customer_name,
-              customer_email: row.customer_email, phone: row.phone,
-              order_ref: row.order_ref, sample_request: row.sample_request,
-              total: row.total, items: row.items_json,
-              extra_lines: ['La capture carte a été exécutée automatiquement avec succès.']
-            }
-          }).catch(console.error);
- 
-          results.push({ id: row.id, order_ref: row.order_ref, mode: 'card', status: 'captured' });
-        } else if (row.payment_mode === 'sepa') {
-          if (!row.stripe_customer_id || !row.stripe_payment_method_id) throw new Error('customer_id ou payment_method_id manquant');
-          const pi = await stripe.paymentIntents.create({
-            amount: row.amount_cents, currency: row.currency || 'eur',
-            customer: row.stripe_customer_id, payment_method: row.stripe_payment_method_id,
-            payment_method_types: ['sepa_debit'], confirm: true,
-            metadata: { order_ref: row.order_ref || '', delay_days: String(row.delay_days || 0), company_name: row.company_name || '' }
-          });
-          await markPaymentStatus(row.id, 'captured', null, { stripe_payment_intent_id: pi.id });
- 
-          await sendEmail({
-            subject: `✅ SEPA initié — ${row.company_name} — ${row.order_ref}`,
-            htmlData: {
-              title: 'Débit SEPA initié', payment_mode: 'Prélèvement SEPA',
-              captureDate: formatDateFR(new Date()), delay_days: row.delay_days,
-              company_name: row.company_name, customer_name: row.customer_name,
-              customer_email: row.customer_email, phone: row.phone,
-              order_ref: row.order_ref, sample_request: row.sample_request,
-              total: row.total, items: row.items_json,
-              extra_lines: ['Le débit SEPA différé a été initié automatiquement avec succès.']
-            }
-          }).catch(console.error);
- 
-          results.push({ id: row.id, order_ref: row.order_ref, mode: 'sepa', status: 'captured' });
-        } else {
-          throw new Error(`Mode inconnu: ${row.payment_mode}`);
-        }
-      } catch (err) {
-        console.error('capture item error', row.id, err);
-        await markPaymentStatus(row.id, 'error', err.message || 'Erreur inconnue');
-        results.push({ id: row.id, order_ref: row.order_ref, mode: row.payment_mode, status: 'error', error: err.message });
-      }
-    }
- 
-    res.json({ ok: true, processed: results.length, results });
-  } catch (err) {
-    console.error('run-due-captures error', err);
-    res.status(500).json({ error: err.message || 'Erreur serveur' });
-  }
-});
- // ═══════════════════════════════════════════
 // BON DE COMMANDE PRO (sans paiement Stripe)
 // ═══════════════════════════════════════════
 app.post('/order-pro', async (req, res) => {
@@ -860,13 +571,40 @@ app.post('/order-pro', async (req, res) => {
       return res.status(400).json({ error: 'Email invalide' });
     }
 
-    const portAmt  = Number(shipping  || 0);
-    const subTotal = Number(total     || 0);
+    const portAmt   = Number(shipping  || 0);
+    const subTotal  = Number(total     || 0);
     const grandTotal = subTotal + portAmt;
     const portLabel  = portAmt === 0 ? 'Franco de port (offert)' : (shipping_label || money(portAmt));
-    const now = formatDateFR(new Date());
+    const now        = formatDateFR(new Date());
+    const amountCents = Math.round(grandTotal * 100);
 
-    // ── Lignes supplémentaires dans l'email admin ──
+    // ── INSERT en base pour que l'espace pro puisse afficher la commande ──
+    if (pool) {
+      await pool.query(`
+        INSERT INTO scheduled_payments (
+          order_ref, payment_mode, delay_days, due_at, status,
+          amount_cents, currency, company_name, customer_name, customer_email,
+          phone, sample_request, total, items_json
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      `, [
+        order_ref,
+        'bon_de_commande',
+        0,
+        new Date().toISOString(),
+        'pending',
+        amountCents,
+        'eur',
+        company_name || '',
+        customer_name,
+        customer_email,
+        phone || '',
+        sample_request || '',
+        grandTotal,
+        JSON.stringify(items)
+      ]);
+    }
+
+    // ── Email admin ──
     const extra_lines = [
       `📅 Date de réception : ${now}`,
       `🚚 Frais de port : ${portLabel}`,
@@ -878,8 +616,8 @@ app.post('/order-pro', async (req, res) => {
       subject: `📋 Bon de commande PRO — ${safe(company_name)} — ${safe(order_ref)}`,
       htmlData: {
         title: 'Bon de commande Pro',
-        payment_mode: 'Paiement différé (espace pro)',
-        captureDate: 'À définir via espace pro',
+        payment_mode: 'Bon de commande (paiement différé)',
+        captureDate: 'À définir',
         delay_days: 0,
         company_name,
         shop_name: '',
@@ -894,7 +632,7 @@ app.post('/order-pro', async (req, res) => {
       }
     });
 
-    console.log(`[order-pro] Bon de commande envoyé — ${order_ref} — ${company_name}`);
+    console.log(`[order-pro] OK — ${order_ref} — ${company_name}`);
     res.json({ success: true });
 
   } catch (err) {
