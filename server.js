@@ -835,7 +835,73 @@ app.post('/run-due-captures', async (req, res) => {
     res.status(500).json({ error: err.message || 'Erreur serveur' });
   }
 });
- 
+ // ═══════════════════════════════════════════
+// BON DE COMMANDE PRO (sans paiement Stripe)
+// ═══════════════════════════════════════════
+app.post('/order-pro', async (req, res) => {
+  try {
+    const {
+      order_ref,
+      customer_name,
+      customer_email,
+      company_name,
+      phone,
+      total,
+      shipping,
+      shipping_label,
+      sample_request,
+      items = []
+    } = req.body;
+
+    if (!order_ref || !customer_email || !customer_name) {
+      return res.status(400).json({ error: 'Champs obligatoires manquants' });
+    }
+    if (!validateEmail(customer_email)) {
+      return res.status(400).json({ error: 'Email invalide' });
+    }
+
+    const portAmt  = Number(shipping  || 0);
+    const subTotal = Number(total     || 0);
+    const grandTotal = subTotal + portAmt;
+    const portLabel  = portAmt === 0 ? 'Franco de port (offert)' : (shipping_label || money(portAmt));
+    const now = formatDateFR(new Date());
+
+    // ── Lignes supplémentaires dans l'email admin ──
+    const extra_lines = [
+      `📅 Date de réception : ${now}`,
+      `🚚 Frais de port : ${portLabel}`,
+      `💰 Total HT (port inclus) : ${money(grandTotal)}`,
+      `⚠️ Commande à traiter manuellement — aucun paiement Stripe encaissé.`
+    ];
+
+    await sendEmail({
+      subject: `📋 Bon de commande PRO — ${safe(company_name)} — ${safe(order_ref)}`,
+      htmlData: {
+        title: 'Bon de commande Pro',
+        payment_mode: 'Paiement différé (espace pro)',
+        captureDate: 'À définir via espace pro',
+        delay_days: 0,
+        company_name,
+        shop_name: '',
+        customer_name,
+        customer_email,
+        phone,
+        order_ref,
+        sample_request,
+        total: grandTotal,
+        items,
+        extra_lines
+      }
+    });
+
+    console.log(`[order-pro] Bon de commande envoyé — ${order_ref} — ${company_name}`);
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error('order-pro error', err);
+    res.status(500).json({ error: err.message || 'Erreur serveur' });
+  }
+});
 ensureDb()
   .then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
