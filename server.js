@@ -108,30 +108,36 @@ function renderItemsTable(items = []) {
   if (!Array.isArray(items) || !items.length) {
     return '<p style="color:#888;font-style:italic;">Aucun produit transmis.</p>';
   }
- 
+
   const rows = items.map((item, i) => {
-    const name = shortProductName(item.title || item.name);
-    const variant = item.variant || item.variant_title || '';
-    const sku = item.sku || '';
-    const qty = Number(item.quantity || 1);
-    const unitPrice = Number(item.unit_price || item.price || 0);
-    const lineTotal = Number(item.line_price || item.line_total || unitPrice * qty);
-    const bg = i % 2 === 0 ? '#ffffff' : '#f9f9f9';
- 
+    const name     = item.title || item.name || 'Non renseigné';
+    const coloris  = item.coloris  || (item.variant ? item.variant.split(' / ')[0] : '') || '—';
+    const longueur = item.longueur || (item.variant ? item.variant.split(' / ')[1] : '') || '—';
+    const grammage = item.grammage || (item.variant ? item.variant.split(' / ')[2] : '') || '—';
+    const ref      = item.ref || item.sku || '—';
+    const qty      = Number(item.quantity || 1);
+    const unitPrice= Number(item.unit_price || item.price || 0);
+    const lineTotal= Number(item.line_price || item.line_total || unitPrice * qty);
+    const bg       = i % 2 === 0 ? '#ffffff' : '#f9f9f9';
+
     return `<tr style="background:${bg};">
       <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-weight:600;font-size:13px;">${safe(name)}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:12px;color:#555;">${safe(variant)}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#1a6a3a;font-weight:600;white-space:nowrap;">${sku || '—'}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:12px;color:#555;">${safe(coloris)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:12px;color:#555;">${safe(longueur)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:12px;color:#555;">${safe(grammage)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:11px;color:#1a6a3a;font-weight:600;white-space:nowrap;">${safe(ref)}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:13px;">${qty}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;">${money(unitPrice)}</td>
       <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;color:#c8141e;font-size:13px;">${money(lineTotal)}</td>
     </tr>`;
   }).join('');
- 
+
   return `<table style="width:100%;border-collapse:collapse;font-size:14px;">
     <thead><tr style="background:#f5f5f5;">
       <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e5e5e5;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;">Produit</th>
-      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e5e5e5;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;">Coloris / Variante</th>
+      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e5e5e5;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;">Coloris</th>
+      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e5e5e5;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;">Taille</th>
+      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e5e5e5;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;">Grammage</th>
       <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e5e5e5;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;">Référence</th>
       <th style="padding:10px 12px;text-align:center;border-bottom:2px solid #e5e5e5;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;">Qté</th>
       <th style="padding:10px 12px;text-align:right;border-bottom:2px solid #e5e5e5;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;">Prix HT</th>
